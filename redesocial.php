@@ -100,6 +100,19 @@ $res = $stmt->get_result();
 $notificacoes = $res->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
 ?>
+<?php
+// Buscar amigos do usuário
+$sql_amigos = "SELECT u.id, u.nome, u.foto 
+               FROM usuarios u
+               JOIN amizades a ON (u.id = a.id_usuario1 AND a.id_usuario2 = ?) 
+                               OR (u.id = a.id_usuario2 AND a.id_usuario1 = ?)";
+$stmt = $conn->prepare($sql_amigos);
+$stmt->bind_param("ii", $usuario_logado, $usuario_logado);
+$stmt->execute();
+$res = $stmt->get_result();
+$amigos = $res->fetch_all(MYSQLI_ASSOC);
+$stmt->close();
+?>
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -200,7 +213,13 @@ header {
 }
 
 .wrap{max-width:1100px;margin:24px auto;display:flex;gap:20px;padding:0 12px;}
-.feed{flex:2.6;display:flex;flex-direction:column;gap:18px;}
+.feed {
+    flex: 2.6;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    margin-left: 50px; /* largura da barra + um pequeno espaço */
+}
 .sidebar{flex:1;background:var(--white);border-radius:12px;padding:14px;box-shadow:0 6px 18px rgba(0,0,0,0.06);height:fit-content;border: 12px solid 	#8FBC8F; /* borda visível */}
 .card{background:#fff;padding:18px;border-radius:12px;box-shadow:0 6px 18px rgba(0,0,0,0.06);border: 12px solid 	#8FBC8F; /* borda visível */}
 #novo-post textarea{width:97%;min-height:80px;border-radius:10px;padding:10px;border:1px solid #ddd;resize:vertical;}
@@ -295,12 +314,145 @@ nav ul li a {
   color: #b33;
 }
 </style>
+<style>
+#msg-flutuante {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    background: #3f7c72;
+    color: white;
+    padding: 12px 18px;
+    border-radius: 10px;
+    font-size: 15px;
+    box-shadow: 0px 4px 10px #00000044;
+    opacity: 0;
+    transition: opacity .3s;
+    z-index: 9999;
+}
+#msg-flutuante.erro { background: #b33; }
+/* Container do botão */
+.amigos-lateral-container {
+  position: fixed;
+  top: 50px; /* ajuste conforme quiser */
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  z-index: 1000;
+}
+
+/* Checkbox escondido */
+.amigos-lateral-container input {
+  display: none;
+}
+
+/* Botão com seta */
+.container {
+  background: white;
+  border: 2px solid #8f7c72;
+  border-radius: 8px;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  position: relative;
+  user-select: none;
+}
+
+.container .chevron-right {
+  width: 20px;
+  height: 20px;
+  fill: #8f7c72;
+  transition: transform 0.5s ease;
+}
+
+/* Gira a seta ao clicar */
+input:checked + .container .chevron-right {
+  transform: rotate(180deg);
+}
+
+/* Barra lateral de amigos */
+#amigos-lateral {
+  position: fixed;
+  top: 0;
+  left: -260px; /* começa escondida */
+  width: 250px;
+  height: 100vh;
+  background: white;
+  border-right: 2px solid #8f7c72;
+  padding: 16px;
+  box-shadow: 4px 0 12px rgba(0,0,0,0.1);
+  transition: left 0.5s ease;
+  overflow-y: auto;
+  z-index: 999;
+}
+/* Mostra a barra ao clicar no checkbox */
+input:checked ~ #amigos-lateral {
+  left: 0;
+}
+
+/* Título da barra */
+#amigos-lateral h3 {
+    margin: 0;
+    text-align: center;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+
+/* Amigos internos */
+.amigo-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+
+.amigo-item:hover {
+    background: rgba(63,124,114,0.1);
+}
+
+.amigo-item img {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid #8f7c72;
+}
+.amigo-item span {
+    font-size: 14px;
+    font-weight: 500;
+    flex: 1;
+}
+</style>
+
+<div id="msg-flutuante"></div>
+
+<script>
+function mostrarMensagem(texto, tipo){
+    const msg = document.getElementById("msg-flutuante");
+
+    msg.textContent = texto;
+
+    msg.classList.remove("erro");
+    if(tipo === "erro") msg.classList.add("erro");
+
+    msg.style.opacity = "1";
+
+    setTimeout(() => {
+        msg.style.opacity = "0";
+    }, 2500);
+}
+</script>
 </head>
 <body>
 
 <header>
   <div class="bolinhas">
-    <a href="estudos.php">
+    <a href="chat_grupo.php">
       <img src="https://i.pinimg.com/1200x/e4/6d/1a/e46d1add185e813f4cc36b417128647f.jpg" alt="Estudos">
       <span>Estudos</span>
     </a>
@@ -423,7 +575,8 @@ nav ul li a {
 
         <div class="post-actions">
           <button onclick="curtirPost(<?= $post['post_id'] ?>)" title="Curtir">
-            <i class="fa-regular fa-heart" id="icon-heart-<?= $post['post_id'] ?>"></i>
+          <i class="<?= $post['ja_curti'] ? 'fa-solid' : 'fa-regular' ?> fa-heart"
+            id="icon-heart-<?= $post['post_id'] ?>"></i>
             <span id="curtidas-<?= $post['post_id'] ?>"><?= $post['total_curtidas'] ?></span>
           </button>
 
@@ -451,7 +604,33 @@ nav ul li a {
       </div>
     <?php endforeach; ?>
   </div>
+  
+  <div class="amigos-lateral-container">
+  <!-- Checkbox escondido para controlar animação -->
+  <input type="checkbox" id="toggle-amigos">
 
+  <!-- Botão com a seta -->
+  <label for="toggle-amigos" class="container">
+    Amigos
+    <svg class="chevron-right" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+      <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/>
+    </svg>
+  </label>
+
+  <!-- Barra lateral de amigos -->
+  <div id="amigos-lateral">
+    <h3>Amigos</h3>
+    <div class="amigo-item">
+      <img src="imagens/usuarios/default.jpg" alt="Amigo">
+      <span>Amigo 1</span>
+    </div>
+    <div class="amigo-item">
+      <img src="imagens/usuarios/default.jpg" alt="Amigo">
+      <span>Amigo 2</span>
+    </div>
+    <!-- Adicione mais amigos aqui -->
+  </div>
+</div>
   <div class="sidebar">
     <h3>Sugestões</h3>
     <?php foreach($sugestoes as $s): ?>
@@ -499,14 +678,23 @@ nav ul li a {
 <script>
 function fecharModal(){ document.getElementById('modal').style.display = 'none'; }
 
-function curtirPost(postId){
-  fetch('curtir_ajax.php?post_id='+postId)
-    .then(r=>r.json()).then(data=>{
-      if(data.status==='sucesso'){
-        document.getElementById('curtidas-'+postId).innerText = data.total;
-        const icon = document.getElementById('icon-heart-'+postId);
-        icon.className = data.ja_curti ? 'fa-solid fa-heart' : 'fa-regular fa-heart';
-      } else alert('Erro ao curtir');
+function curtirPost(id) {
+    fetch("curtir.php?id=" + id)
+    .then(r => r.json())
+    .then(data => {
+        if (data.ok) {
+            document.getElementById("curtidas-" + id).innerText = data.curtidas;
+
+            let icon = document.getElementById("icon-heart-" + id);
+
+            if (data.curtiu === 1) {
+                icon.classList.remove("fa-regular");
+                icon.classList.add("fa-solid");
+            } else {
+                icon.classList.remove("fa-solid");
+                icon.classList.add("fa-regular");
+            }
+        }
     });
 }
 function abrirPerfil(usuarioId) {
@@ -575,15 +763,22 @@ function adicionarAmigo(destinatario){
   })
   .then(r => r.json())
   .then(data => {
+
+    // Mostra sempre a mensagem recebida
+    mostrarMensagem(data.mensagem, data.status);
+
+    // Se realmente for sucesso, atualiza
     if(data.status === 'sucesso'){
-      alert(data.mensagem);
-      // Opcional: remove a sugestão após adicionar
-      atualizarSugestoes(); 
-    } else {
-      alert(data.mensagem || 'Erro ao adicionar amigo');
+      atualizarSugestoes();
     }
+
+    // NÃO TEM ELSE AQUI
+  })
+  .catch(() => {
+    mostrarMensagem("Erro ao enviar solicitação", "erro");
   });
 }
+
 
 
 function responderSolicitacao(id,resposta){
@@ -597,7 +792,6 @@ function responderSolicitacao(id,resposta){
       }
     });
 }
-function escapeHtml(text){return text.replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));}
 </script>
 <script>
 function abrirModal(usuarioId) {
@@ -624,12 +818,10 @@ setInterval(() => {
   atualizarNotificacoes();
   atualizarAmigosOnline();
 }, 10000);
-<script>
   // Atualiza a página automaticamente a cada 1 minuto (60.000 ms)
   setInterval(function() {
-    location.reload();
+    location.reload()
   }, 60000);
-</script>
 </script>
 <script>
 function abrirPerfilUsuario(usuarioId) {
@@ -699,6 +891,19 @@ function escapeHtml(text) {
   setInterval(function() {
     location.reload();
   }, 60000);
+  let timeoutMsg;
+function mostrarMensagem(texto, tipo) {
+    const msg = document.getElementById("msg-flutuante");
+    msg.textContent = texto;
+    msg.classList.remove("erro");
+    if(tipo === "erro") msg.classList.add("erro");
+    msg.style.opacity = "1";
+
+    clearTimeout(timeoutMsg);
+    timeoutMsg = setTimeout(() => {
+        msg.style.opacity = "0";
+    }, 2500);
+}
 </script>
 
 </body>
